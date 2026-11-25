@@ -1,6 +1,6 @@
 import { callWithReferenceTranslation, errorResultFromError, jsonResult, type CallToolResult } from "@soulstream/mcp-contract";
 import type { AuthorizeFolder, BulkSetCardStatusInput, BulkStatusItem, UpdateUnstartedFields } from "../cards/card_maintenance_service.js";
-import { allowed } from "../cards/card_route_body.js";
+import { allowed, resolveCardDependencies } from "../cards/card_route_body.js";
 import { isBoardFolderAllowed, normalizeBoardAccess } from "../board/board_access.js";
 import type { McpCallContext, McpHostOptions } from "./types.js";
 
@@ -17,12 +17,14 @@ type MaintenanceActor = { actorKind: "agent"; actorSessionId: string };
 export const cardMaintenanceHandlers = {
   update_unstarted_card: (o, a, c) => {
     const actor = maintenanceActor(a, c);
-    return translate(o.cards, a, translated => run(async () => {
+    const { depends_on, ...args } = a;
+    return translate(o.cards, args, translated => run(async () => {
       const service = await o.cards.cardServiceProvider!();
       const fields: UpdateUnstartedFields = {};
       for (const [argument, key] of [["title", "title"], ["request", "request"], ["brief", "brief"],
         ["agent_id", "agentId"], ["model_preset", "modelPreset"], ["node_id", "nodeId"]] as const)
         if (typeof translated[argument] === "string") fields[key] = translated[argument] as string;
+      if (depends_on !== undefined) fields.dependsOn = await resolveCardDependencies(o.cards, service, depends_on, o.cards.resolveAccess);
       return service.updateUnstartedCard({
         cardId: String(translated.card_id),
         ...fields,

@@ -76,6 +76,7 @@ export interface FolderSnapshotReadOptions {
   includeArchived?: unknown;
   limit?: unknown;
   cursor?: unknown;
+  allowedFolderIds?: readonly string[] | null;
 }
 
 export async function readFolderSnapshot(
@@ -92,7 +93,7 @@ export async function readFolderSnapshot(
   const outline = view === "outline";
   const directCard = Boolean(cardId);
   const page = outline && !directCard ? normalizeFolderOutlineOptions(options) : undefined;
-  return serializeFolderSnapshot(snapshot, cardId, outline, page);
+  return serializeFolderSnapshot(snapshot, cardId, outline, page, options.allowedFolderIds);
 }
 
 function normalizeFolderOutlineOptions(options: FolderSnapshotReadOptions): FolderOutlinePageOptions {

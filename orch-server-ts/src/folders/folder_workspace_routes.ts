@@ -3,7 +3,7 @@ import { z, ZodError } from "zod";
 import type { FolderActorParams } from "../cards/control_plane/card_types.js";
 import { CardVersionConflict } from "../cards/control_plane/card_models.js";
 import type { FolderRouteOptions } from "./folder_routes.js";
-import { isBoardFolderAllowed, normalizeBoardAccess } from "../board/board_access.js";
+import { isBoardFolderAllowed, normalizeBoardAccess, visibleBoardFolderIds } from "../board/board_access.js";
 import { executeFolderOperation, readFolderSnapshot, type FolderOperation } from "./folder_operations.js";
 import { serializeCardRow, serializeFolder } from "./folder_contracts.js";
 import { folderProjectPageVersion, folderStarred, loadProjectPageStates } from "./folder_starred.js";
@@ -54,7 +54,9 @@ export function registerFolderWorkspaceRoutes(app: FastifyInstance, options: Fol
       try {
         const folderId = request.params.folder_id;
         const folders = [...(await options.provider.listFolders())];
-        if (!isBoardFolderAllowed(normalizeBoardAccess(await options.accessProvider.resolveAccess(request)), folders, folderId)) {
+        const access = normalizeBoardAccess(await options.accessProvider.resolveAccess(request));
+        const visible = access.restricted ? visibleBoardFolderIds(access, folders) : null;
+        if (visible && !visible.has(folderId)) {
           return failure(reply, 403, "FOLDER_ACCESS_DENIED", "Folder access denied");
         }
         if (!options.cardServiceProvider) throw new Error("Folder service is not configured");
@@ -62,7 +64,7 @@ export function registerFolderWorkspaceRoutes(app: FastifyInstance, options: Fol
         if (kind === "snapshot") {
           const body = await readFolderSnapshot(
             service, folderId, request.query.cardId, request.query.view, request.query.includeCompleted !== "false",
-            { includeArchived: request.query.includeArchived, limit: request.query.limit, cursor: request.query.cursor },
+            { includeArchived: request.query.includeArchived, limit: request.query.limit, cursor: request.query.cursor, allowedFolderIds: visible ? [...visible] : null },
           );
           const record = folders.find((folder) => folder.id === folderId) ?? null;
           const pageStates = await loadProjectPageStates(

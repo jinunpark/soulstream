@@ -10,6 +10,7 @@ export type SqlClient = RepositorySql & {
 };
 
 import type { CardStatus } from "@soulstream/wire-schema";
+import type { ProjectedCardDependency } from "../card_dependencies.js";
 import type { CardColor } from "@soulstream/wire-schema/card-colors";
 import type { CardItem, CardNow } from "../card_item_rules.js";
 
@@ -116,6 +117,7 @@ export interface CardLatestActivity {
 /** A card row together with the latest activity preview the projection adds. */
 export interface ProjectedCard extends CardRow {
   latest_activity: CardLatestActivity | null;
+  depends_on?: ProjectedCardDependency[];
 }
 
 /**

@@ -74,6 +74,7 @@ export async function createCardDispatchRuntime(options: {
   broadcaster: InMemorySseReplayBroadcaster<SessionStreamEvent>;
   /** Node for cards that name none; the orchestrator injects its configured value. */
   defaultExecutionNodeId: string;
+  cardDependenciesEnabled?: boolean;
   warn: (message: string) => void;
   onReportsChanged?: PublishPersistentReports;
   appendTimeline?: AppendReportTimeline;
@@ -97,7 +98,7 @@ export async function createCardDispatchRuntime(options: {
 }) {
   const resolver = new FolderContentSqlResolver(options.sqlResolver);
   const resolveSql = () => resolver.resolveSql();
-  const cardDispatchRepository = new CardDispatchRepository(resolveSql);
+  const cardDispatchRepository = new CardDispatchRepository(resolveSql, options.cardDependenciesEnabled);
   const attachmentReadRepository = createLiveAttachmentReadRepository(options.sqlResolver);
   const executionCallerInfo = async (input: ExecutionInput) => {
     if (input.callerSource === "browser") return { source: "browser" as const };
@@ -192,6 +193,7 @@ export async function createCardDispatchRuntime(options: {
     sqlResolver: options.sqlResolver,
     broadcaster: options.broadcaster,
     defaultExecutionNodeId: options.defaultExecutionNodeId,
+    cardDependenciesEnabled: options.cardDependenciesEnabled,
     warn: options.warn,
     onFolderHeaderUpdated: options.onFolderHeaderUpdated,
     onMutation: (change) => dispatcher.acceptMutation(change),
@@ -361,6 +363,7 @@ export async function createCardDispatchRuntime(options: {
     repository: orchestrationRepository,
     cards: serviceProvider,
     dispatch: legacyOptions.repository,
+    cardDependenciesEnabled: options.cardDependenciesEnabled,
     settings: orchestrationSettings,
     resolveTarget: legacyOptions.resolveTarget,
     resolveSessionTarget:async card=>{
@@ -446,6 +449,7 @@ export async function createCardDispatchRuntime(options: {
   });
   dispatcher = new CardDispatcher({
     ...legacyOptions,
+    cardDependenciesEnabled: options.cardDependenciesEnabled,
     orchestration: {
       enabled: () => orchestrationRepository.enabled(),
       kick: () => coordinator.kick(),

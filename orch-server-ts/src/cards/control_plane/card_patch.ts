@@ -6,9 +6,9 @@ export async function patchCardTx(sql:RepositorySql,card:CardRow,fields:Record<s
   const next={...card,...fields};
   if (typeof next.assignee_session_id === "string" && (Object.hasOwn(fields,"assignee_session_id") || fields.archived === false) && !next.archived)
     await assertSingleCardAssignee(sql,next.assignee_session_id,card.id);
-  const writes={...fields};
+  const writes:Record<string,unknown>={...fields,updated_session_id:actor.actorSessionId};
   await sql`UPDATE cards SET ${sql(writes)},
     number=CASE WHEN ${writes.archived===false} THEN COALESCE(number,nextval('cards_number_seq')) ELSE number END,
     status_changed_at=CASE WHEN ${writes.status!==undefined && writes.status!==card.status} THEN NOW() ELSE status_changed_at END,
-    version=version+1,updated_at=NOW(),updated_session_id=${actor.actorSessionId},updated_event_id=${eventId} WHERE id=${card.id}`;
+    version=version+1,updated_at=NOW(),updated_event_id=${eventId} WHERE id=${card.id}`;
 }

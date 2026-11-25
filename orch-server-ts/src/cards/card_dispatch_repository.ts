@@ -5,8 +5,10 @@ import type { CardRow, SqlClient } from "./control_plane/card_types.js";
 import { readCardDispatchSettings } from "./card_dispatch_settings.js";
 import { readCardReminderFacts } from "./card_status_reminder_repository.js";
 import { readCardBoardSessions } from "../session/persistent_report_service.js";
+import { unmetCardDependenciesSql } from "./card_dependencies.js";
 export type DispatchCard = CardRow & {
     folder_name: string;
+    dependencies_unmet?: boolean;
 };
 export type CardSession = {
     session_id: string;
@@ -21,14 +23,21 @@ export type CardSession = {
     metadata?: unknown;
 };
 export class CardDispatchRepository {
-    constructor(private readonly resolveSql: () => Promise<SqlClient>) { }
+    constructor(private readonly resolveSql: () => Promise<SqlClient>, private readonly cardDependenciesEnabled = false) { }
     async reminderFacts(now: number, endedRootId?: string) { return readCardReminderFacts(await this.resolveSql(), now, endedRootId); }
     async boardSessions(cardId: string) { return readCardBoardSessions(await this.resolveSql(), cardId); }
     async settings() { return readCardDispatchSettings(await this.resolveSql()); }
     async queued(): Promise<DispatchCard[]> {
         const sql = await this.resolveSql();
-        return sql<DispatchCard[]> `SELECT c.*,f.name AS folder_name FROM cards c JOIN folders f ON f.id=c.folder_id
+        const dependencies = this.cardDependenciesEnabled
+            ? sql`, ${unmetCardDependenciesSql(sql, sql`c.id`)} AS dependencies_unmet` : sql``;
+        return sql<DispatchCard[]> `SELECT c.*,f.name AS folder_name${dependencies} FROM cards c JOIN folders f ON f.id=c.folder_id
       WHERE c.status='queued' AND NOT c.archived AND NOT f.archived ORDER BY c.queue_position_key COLLATE "C",c.id`;
+    }
+    async hasUnmetDependencies(cardId: string): Promise<boolean> {
+        const sql = await this.resolveSql();
+        const [row] = await sql<{ unmet: boolean }[]>`SELECT ${unmetCardDependenciesSql(sql, cardId)} AS unmet`;
+        return row?.unmet ?? false;
     }
     async limited(): Promise<DispatchCard[]> {
         const sql = await this.resolveSql();

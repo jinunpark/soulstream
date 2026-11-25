@@ -1,11 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { STATUS_CODES } from "node:http";
 import { callWithReferenceTranslation, errorResultFromError, jsonResult, readOrchErrorEnvelopeText, type CallToolResult, type cardTools } from "@soulstream/mcp-contract";
-import { allowed, readCardRouteBody, mutateCardRouteBody, cardRouteErrorResponse } from "../cards/card_route_body.js";
+import { allowed, readCardRouteBody, mutateCardRouteBody, cardRouteErrorResponse, resolveCardFolderIds } from "../cards/card_route_body.js";
 import type { DispatchWorkInput } from "../cards/card_work_dispatch_service.js";
 import type { CardMcpGetInput, CardMcpListInput, CardMcpSearchInput } from "../cards/card_mcp_read.js";
-import { normalizeBoardAccess } from "../board/board_access.js";
-import { filterFolders } from "../folders/folder_route_access.js";
 import { serializeCardRow } from "../folders/folder_contracts.js";
 import type { CardOperation } from "../cards/card_operations.js";
 import type { FolderActorParams } from "../cards/control_plane/card_types.js";
@@ -27,7 +25,7 @@ export const cardHandlers = {
       sessionId: (a.assignee as Args).session_id, userId: (a.assignee as Args).user_id,
     } };
     const created = await mutation(o.cards, "create_card", undefined, { folderId: a.folder_id, title: a.title, request: a.request, brief: a.brief,
-      attachments: a.attachments, ...assignee, nodeId: a.node_id, modelPreset: a.model_preset, queue: a.queue,
+      attachments: a.attachments, ...assignee, nodeId: a.node_id, modelPreset: a.model_preset, queue: a.queue, dependsOn: a.depends_on,
       idempotencyKey: a.idempotency_key ?? randomUUID() }, actor);
     if (a.run !== true) return compactMutation(created);
     const card = created.card as { id: string; status: string } | null;
@@ -48,17 +46,17 @@ export const cardHandlers = {
   }),
   list_cards: (o, a) => run(() => request(async () => {
     const service = await o.cards.cardServiceProvider!();
-    const allowedFolderIds = await mcpAllowedFolderIds(o.cards);
+    const allowedFolderIds = await resolveCardFolderIds(o.cards, o.cards.resolveAccess);
     return service.mcpRead.listCards(listReadInput(a), allowedFolderIds);
   })),
   search_cards: (o, a) => run(() => request(async () => {
     const service = await o.cards.cardServiceProvider!();
-    const allowedFolderIds = await mcpAllowedFolderIds(o.cards);
+    const allowedFolderIds = await resolveCardFolderIds(o.cards, o.cards.resolveAccess);
     return service.mcpRead.searchCards(searchReadInput(a), allowedFolderIds);
   })),
   get_card: (o, a) => run(() => request(async () => {
     const service = await o.cards.cardServiceProvider!();
-    const allowedFolderIds = await mcpAllowedFolderIds(o.cards);
+    const allowedFolderIds = await resolveCardFolderIds(o.cards, o.cards.resolveAccess);
     let cardId = String(a.card_id);
     if (/^[1-9][0-9]{0,8}$/.test(cardId)) {
       const [resolved] = await service.resolveReferences([`#${cardId}`], folderId => allowedFolderIds === null || allowedFolderIds.includes(folderId));
@@ -221,11 +219,6 @@ function getReadInput(args: Args): CardMcpGetInput {
     input.cursors = args.cursors as NonNullable<CardMcpGetInput["cursors"]>;
   if (typeof args.since === "string") input.since = args.since;
   return input;
-}
-async function mcpAllowedFolderIds(options: Options): Promise<readonly string[] | null> {
-  const [access, folders] = await Promise.all([options.resolveAccess!(), options.provider.listFolders()]);
-  const normalized = normalizeBoardAccess(access);
-  return normalized.restricted ? filterFolders(normalized, folders).map(folder => folder.id) : null;
 }
 async function append(options: Options, operation: CardOperation, args: Args, context: McpCallContext, body: Args,
   cas = false, project: MutationProjector = compactMutation) {

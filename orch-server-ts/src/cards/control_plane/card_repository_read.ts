@@ -4,10 +4,13 @@ import { projectCardActivity } from "../card_latest_activity.js";
 import { completedCardCursor, pagedCardCursor, type CompletedCardQuery, type PagedCardQuery } from "../completed_card_query.js";
 import { projectCardAttachmentRows, projectCardQuestionRows } from "../card_attachment_projection.js";
 
+import { readCardDependencies } from "../card_dependencies.js";
+
 export class CardRepositoryRead {
   constructor(
     protected readonly sql: SqlClient,
     private readonly corsAllowedOrigins: readonly string[] = [],
+    private readonly cardDependenciesEnabled = false,
   ) {}
   transaction<T>(callback: (sql: RepositorySql) => Promise<T>): Promise<T> { return this.sql.begin(callback); }
   async getFolder(folderId: string): Promise<FolderRow | null> {
@@ -95,9 +98,12 @@ export class CardRepositoryRead {
   async getCard(cardId: string): Promise<CardRow | null> {
     return (await this.sql<CardRow[]>`SELECT * FROM cards WHERE id=${cardId}`)[0] ?? null;
   }
-  async projectCards(cards: readonly CardRow[]) {
+  async projectCards(cards: readonly CardRow[]): Promise<ProjectedCard[]> {
     const withActivity = await projectCardActivity(this.sql, cards);
-    return projectCardAttachmentRows(this.sql, withActivity, undefined, this.corsAllowedOrigins);
+    const projected = await projectCardAttachmentRows(this.sql, withActivity, undefined, this.corsAllowedOrigins);
+    if (!this.cardDependenciesEnabled) return projected;
+    const dependencies = await readCardDependencies(this.sql, cards.map(card => card.id));
+    return projected.map(card => ({ ...card, depends_on: dependencies.get(card.id) ?? [] }));
   }
   async listReports(cardId: string) {
     const rows = await this.sql<Record<string, unknown>[]>`SELECT * FROM card_reports WHERE card_id=${cardId} ORDER BY created_at DESC,id DESC`;

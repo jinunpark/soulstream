@@ -153,7 +153,9 @@ export const useCardStore = create<CardState>((set,get) => ({
   async handleCardUpdated(event) {
     const revision=++updateSequence;
     globalMembership=null;
+    const becameStale = !staleCards.has(event.cardId);
     staleCards.set(event.cardId,revision);
+    if(becameStale) set({});
     // Only a mounted global list can reconcile every affected card. Scoped
     // lists may omit a moved, completed or otherwise out-of-scope card.
     if(globalLists>0&&get().byId[event.cardId]&&!get().details[event.cardId]){
@@ -172,16 +174,18 @@ export const useCardStore = create<CardState>((set,get) => ({
   reconcileGlobalList(cards, { startedUpdateSeq = updateSequence, scopeRevision } = {}) {
     const ids=new Set(cards.map(card=>card.id));
     if(scopeRevision!==undefined)globalMembership={ids,scopeRevision};
+    let freshnessChanged = false;
     for (const id of ids) {
       const revision = staleCards.get(id);
-      if (revision !== undefined && revision <= startedUpdateSeq) staleCards.delete(id);
+      if (revision !== undefined && revision <= startedUpdateSeq) freshnessChanged = staleCards.delete(id) || freshnessChanged;
     }
+    if(freshnessChanged) set({});
     for(const [id,revision] of pendingListUpdates){
       if (revision > startedUpdateSeq) continue;
       pendingListUpdates.delete(id);
       if (ids.has(id)) continue;
       void get().loadCard(id).then(()=>{
-        if(staleCards.get(id)===revision)staleCards.delete(id);
+        if(staleCards.get(id)===revision){staleCards.delete(id);set({});}
       }).catch(()=>undefined);
     }
   },
@@ -191,6 +195,7 @@ export const useCardStore = create<CardState>((set,get) => ({
     if(revision===observedReplay)return;
     observedReplay=revision;
     for(const id of Object.keys(get().byId))staleCards.set(id,++updateSequence);
+    set({});
   },
   reset(){resetCardExecutions();pendingListUpdates.clear();staleCards.clear();rowSequences.clear();rowClock=0;globalMembership=null;observedReplay=0;set({byId:{},details:{},errors:{},pendingItemConfirmations:{},folderIds:{},localRevision:0});},
 }));

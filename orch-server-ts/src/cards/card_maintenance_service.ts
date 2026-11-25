@@ -25,6 +25,7 @@ import type {
   SqlClient,
 } from "./control_plane/card_types.js";
 import type { CardStatus } from "@soulstream/wire-schema";
+import { assertCardDependenciesEnabled, assertMergeSourcesHaveNoDependenciesTx, lockCardDependencyTargetsTx, lockCardDependenciesTx, replaceCardDependenciesTx } from "./card_dependencies.js";
 
 export type AuthorizeFolder = (folderId: string) => Promise<void>;
 
@@ -35,6 +36,7 @@ export type UpdateUnstartedFields = {
   agentId?: string;
   modelPreset?: string;
   nodeId?: string;
+  dependsOn?: string[];
 };
 
 export type UpdateUnstartedInput = FolderActorParams & UpdateUnstartedFields & {
@@ -80,6 +82,7 @@ export type CardMaintenanceChange = {
 
 export type CardMaintenancePorts = {
   sql: SqlClient;
+  cardDependenciesEnabled?: boolean;
   repo: CardRepository;
   core: CardMutationCore;
   patchTx: (sql: RepositorySql, card: CardRow, fields: Record<string, unknown>, actor: FolderActorParams, eventId: number | null) => Promise<void>;
@@ -115,6 +118,7 @@ function updateChangedFields(params: UpdateUnstartedFields): string[] {
     params.agentId !== undefined ? "agent_id" : null,
     params.modelPreset !== undefined ? "model_preset" : null,
     params.nodeId !== undefined ? "node_id" : null,
+    params.dependsOn !== undefined ? "depends_on" : null,
   ].filter((field): field is string => field !== null);
   if (fields.length === 0) throw invalidMaintenance("변경할 필드를 하나 이상 지정하세요.");
   return fields;
@@ -134,7 +138,7 @@ export class CardMaintenanceService {
   private readonly statusTx: CardMaintenancePorts["statusTx"];
   private readonly afterCommitCards: CardMaintenancePorts["afterCommit"];
 
-  constructor(ports: CardMaintenancePorts) {
+  constructor(private readonly ports: CardMaintenancePorts) {
     this.sql = ports.sql;
     this.core = ports.core;
     this.patchTx = ports.patchTx;
@@ -144,13 +148,15 @@ export class CardMaintenanceService {
 
   async updateUnstartedCard(params: UpdateUnstartedInput, authorizeFolder: AuthorizeFolder): Promise<UpdateUnstartedResult> {
     const actorSessionId = requireMaintenanceSession(params,'UPDATE_UNSTARTED');
+    assertCardDependenciesEnabled(this.ports.cardDependenciesEnabled ?? false, params.dependsOn);
+    const dependencies = this.ports.cardDependenciesEnabled ? params.dependsOn : undefined;
     const idempotencyKey = requireIdempotencyKey(params.idempotencyKey);
-    const changedFields = updateChangedFields(params);
+    const changedFields = updateChangedFields({ ...params, dependsOn: dependencies });
     const storageKey = maintenanceStorageKey("update_unstarted_card", actorSessionId, idempotencyKey);
     const input: Record<string, unknown> = { card_id: params.cardId };
     for (const [key, value] of [["title", params.title], ["request", params.request], ["brief", params.brief],
       ["agent_id", params.agentId], ["model_preset", params.modelPreset], ["node_id", params.nodeId],
-      ["expected_version", params.expectedVersion]] as const)
+      ["expected_version", params.expectedVersion], ["depends_on", dependencies]] as const)
       if (value !== undefined) input[key] = value;
 
     const current = await readCardOrFail(this.sql, params.cardId);
@@ -164,6 +170,10 @@ export class CardMaintenanceService {
         await authorizeFolder((await readCardOrFail(sql, params.cardId)).folder_id);
         const stored = prior.payload_json.result as Omit<UpdateUnstartedResult, "idempotent">;
         return { result: { ...stored, idempotent: true } };
+      }
+      if (dependencies !== undefined) {
+        await lockCardDependenciesTx(sql);
+        await lockCardDependencyTargetsTx(sql, params.cardId, dependencies);
       }
       const locked = await lockCardTx(sql, params.cardId);
       await authorizeFolder(locked.folder_id);
@@ -181,6 +191,7 @@ export class CardMaintenanceService {
         folderId: locked.folder_id, targetKind: "card", targetId: locked.id,
         operationType: "update_unstarted_card", actor: params, idempotencyKey: storageKey, payload,
         apply: async (tx, eventId) => {
+          if (dependencies !== undefined) await replaceCardDependenciesTx(tx, locked.id, dependencies);
           const fields = await this.updateFieldsTx(tx, locked, params);
           await this.patchTx(tx, locked, this.fields(decision,locked,command,params,eventId,fields), params, eventId);
           committed = await readCardOrFail(tx, locked.id);
@@ -236,8 +247,10 @@ export class CardMaintenanceService {
         return { result: { ...stored, idempotent: true }, changes: [] };
       }
 
+      if (this.ports.cardDependenciesEnabled) await lockCardDependenciesTx(sql);
       const locked = await lockCardsTx(sql, participantIds, new Map(participantIds.map(cardId => [cardId, cardId])));
       for (const card of locked.values()) await authorizeFolder(card.folder_id);
+      if (this.ports.cardDependenciesEnabled) await assertMergeSourcesHaveNoDependenciesTx(sql, sourceCardIds);
       const target = locked.get(params.targetCardId)!;
       const sources = sourceCardIds.map(cardId => locked.get(cardId)!);
       const targetCommand={type:'UPDATE_UNSTARTED'} as const;

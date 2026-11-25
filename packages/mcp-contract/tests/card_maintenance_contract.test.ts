@@ -62,5 +62,19 @@ test("bulk_set_card_status bounds the card list to 1~20 and only accepts the fou
 
 test("create_card points pre-start edits at update_unstarted_card", () => {
   assert.equal(cardTools.create_card.config.description,
-    "요청 원문을 담은 카드를 드래프트로 만든다. 시작 전 수정은 update_unstarted_card를 쓴다. queue=true면 대기열에 올려 순서가 오면 시스템이 실행한다. assignee를 생략하면 만든 세션의 에이전트가 담당이 되고, 담당이 에이전트일 때 node_id와 model_preset을 생략하면 만든 세션의 값이 들어가며, brief에 인계 내용을 적는다.");
+    "요청 원문을 담은 카드를 드래프트로 만든다. 시작 전 수정은 update_unstarted_card를 쓴다. queue=true면 대기열에 올려 순서가 오면 시스템이 실행한다. depends_on으로 먼저 완료할 카드를 지정한다. assignee를 생략하면 만든 세션의 에이전트가 담당이 되고, 담당이 에이전트일 때 node_id와 model_preset을 생략하면 만든 세션의 값이 들어가며, brief에 인계 내용을 적는다.");
+});
+
+test("create and update accept up to 20 dependency IDs or references", () => {
+  for (const tool of [cardTools.create_card, cardTools.update_unstarted_card]) {
+    const schema = tool.config.inputSchema.depends_on;
+    assert.equal(schema.safeParse(undefined).success, true);
+    assert.equal(schema.safeParse([]).success, true);
+    assert.equal(schema.safeParse(["#12", "12", "card-uuid"]).success, true);
+    assert.equal(schema.safeParse([""]).success, false);
+    assert.equal(schema.safeParse(Array(20).fill("card-uuid")).success, true);
+    assert.equal(schema.safeParse(Array(21).fill("card-uuid")).success, false);
+    assert.match(schema.description ?? "", /done.*cancelled.*review.*run_card/);
+  }
+  assert.match(update.shape.depends_on.description ?? "", /\[\]/);
 });

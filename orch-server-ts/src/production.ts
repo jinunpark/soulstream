@@ -900,6 +900,7 @@ export async function createLiveProductionApplication(
   cardDispatchRuntime=await createCardDispatchRuntime({sqlResolver,router:runtimeServices.sessionRouter,bridge:runtimeServices.sessionBridge,
     availability:providers.modelPresetAvailability,notifier:pushNotifier,admin:providers.adminUsersRoutes.provider,
     broadcaster:runtimeServices.sessionBroadcaster,defaultExecutionNodeId:config.default_execution_node_id,warn:context.warn,
+    cardDependenciesEnabled:config.card_dependencies_enabled,
     corsAllowedOrigins: config.cors_allowed_origins,
     onReportsChanged: updates => publishPersistentReports(updates),
     appendTimeline: (sessionId, event) => appendReportTimeline(sessionId, event),

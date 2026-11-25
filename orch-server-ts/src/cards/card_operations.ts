@@ -5,7 +5,8 @@ import { cardEvidenceSchema, cardQuestionAttachmentsSchema, cardQuestionInputIss
 import type { CardControlPlaneService } from "./card_control_plane_service.js";
 import type { FolderActorParams } from "./control_plane/card_types.js";
 import type { CardQuestionAnswerInput } from "./card_question_rules.js";
-import { serializeCardMutation, serializeCardRow } from "../folders/folder_contracts.js";
+import { serializeCardMutation, serializeCardRow, serializeCardRowForFolders } from "../folders/folder_contracts.js";
+import { MAX_CARD_DEPENDENCIES } from "./card_dependencies.js";
 const id=z.string().min(1);
 const attachments=z.array(z.object({nodeId:id,path:id,name:id,mimeType:id}).strict()).default([]);
 const assignee=z.object({ kind:z.enum(["agent","human","session"]).nullable(),agentId:id.nullable().optional(),sessionId:id.nullable().optional(),userId:id.nullable().optional() });
@@ -20,7 +21,7 @@ const nonBlank=(message:string)=>z.string().min(1).superRefine((value,ctx)=>{
 const choiceAnswer=append.extend({ questionId:id,mode:z.literal("choice"),option:nonBlank("선택지를 입력하세요"),answer:nonBlank("답 내용이 필요합니다").optional() });
 const textAnswer=append.extend({ questionId:id,mode:z.literal("text"),answer:nonBlank("답 내용이 필요합니다") });
 export const cardOperationSchemas={
-  create_card:z.object({ folderId:id,title:id,request:z.string(),brief:z.string().optional(),attachments,queue:z.boolean().optional(),assignee:assignee.nullable().optional(),nodeId:id.nullable().optional(),modelPreset:id.nullable().optional(),idempotencyKey:id }),
+  create_card:z.object({ folderId:id,title:id,request:z.string(),brief:z.string().optional(),attachments,queue:z.boolean().optional(),dependsOn:z.array(id).max(MAX_CARD_DEPENDENCIES).optional(),assignee:assignee.nullable().optional(),nodeId:id.nullable().optional(),modelPreset:id.nullable().optional(),idempotencyKey:id }),
   update_card:mutation.extend({ title:id.optional(),brief:z.string().optional(),archived:z.boolean().optional(),assignee:assignee.nullable().optional(),nodeId:id.nullable().optional(),modelPreset:id.nullable().optional(),color:z.enum(CARD_COLOR_KEYS).optional() }).refine(v=>Object.keys(v).some(k=>!["expectedVersion","idempotencyKey","reason"].includes(k)),"Patch requires a field"),
   start_card_work:mutation.extend({execution:z.object({registrationId:id,executionCommandId:id}).strict()}),
   set_card_status:mutation.extend({ status:z.enum(CARD_STATUSES),blockedKind:z.enum(["limit","question","no_report"]).nullable().optional(),blockedDetail:z.string().nullable().optional(),
@@ -82,7 +83,8 @@ function assertVerificationWaitBoundary(operation:CardOperation,input:unknown) {
     throw boundaryError("검증 대기가 아니면 wakeAt과 waitingFor를 주지 않습니다");
 }
 function boundaryError(message:string) { return Object.assign(new Error(message),{ statusCode:400,code:"INVALID_CARD_REQUEST" }); }
-export async function executeCardOperation(service:CardControlPlaneService,operation:CardOperation,body:unknown,cardId:string | undefined,actor:FolderActorParams) {
+export async function executeCardOperation(service:CardControlPlaneService,operation:CardOperation,body:unknown,cardId:string | undefined,actor:FolderActorParams,
+  allowedFolderIds:readonly string[] | null = null) {
   assertVerificationWaitBoundary(operation,body);
   const parsed=operation === "answer_card_question" ? parseCardQuestionAnswer(body) : cardOperationSchemas[operation].strict().parse(body);
   if (operation === "add_card_comment") {
@@ -120,7 +122,7 @@ export async function executeCardOperation(service:CardControlPlaneService,opera
       case "request_card_review":return service.requestCardReview({ ...common,...cardOperationSchemas.request_card_review.parse(parsed) });
     }
   })();
-  return serializeCardMutation(result);
+  return serializeCardMutation(result,allowedFolderIds);
 }
 export type CardDetail = NonNullable<Awaited<ReturnType<CardControlPlaneService["getCard"]>>>;
 export class CardOperationError extends Error {
@@ -130,7 +132,7 @@ export class CardOperationError extends Error {
     this.name = "CardOperationError";
   }
 }
-export function serializeCardDetail(detail:CardDetail) {
-  return { card:serializeCardRow(detail.card),reports:detail.reports.map(serializeCardRow),questions:detail.questions.map(serializeCardRow),
+export function serializeCardDetail(detail:CardDetail,allowedFolderIds:readonly string[] | null = null) {
+  return { card:serializeCardRowForFolders(detail.card,allowedFolderIds),reports:detail.reports.map(serializeCardRow),questions:detail.questions.map(serializeCardRow),
     comments:detail.comments.map(serializeCardRow),sessions:detail.sessions.map(serializeCardRow),notes:detail.notes.map(serializeCardRow),nowHistory:detail.nowHistory };
 }

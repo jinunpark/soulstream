@@ -20,3 +20,18 @@ it("copies each map at most once per batch while retaining version and detail se
   expect(useCardStore.getState().details.a.card).toBe(updatedA);
   expect(useCardStore.getState().details.b.card).toBe(updatedB);
 });
+
+it("notifies subscribers when a cached card becomes stale or current", () => {
+  const card = { id: "dep", status: "done", version: 1 } as CardRow;
+  const store = useCardStore.getState();
+  store.putCards([card]);
+  const current: boolean[] = [];
+  const unsubscribe = useCardStore.subscribe(state => current.push(state.isCardCurrent(card.id)));
+  try {
+    store.observeReplay(1);
+    store.reconcileGlobalList([card]);
+    expect(current).toEqual([false, true]);
+  } finally {
+    unsubscribe();
+  }
+});

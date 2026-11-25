@@ -73,11 +73,12 @@ export async function executeFolderHostOperation(
   options: FolderControlPlaneHostRouteOptions,
   operation: string,
   body: Record<string, unknown>,
+  resolveAllowedFolderIds?: () => Promise<readonly string[] | null>,
 ): Promise<unknown> {
   const service = await options.serviceProvider();
   return ["assign_session", "get_default", "get_all", "get_catalog", "get_session_assignments"].includes(operation)
     ? await dispatch(service, operation, body)
-    : await dispatchWorkspace(options, operation, body);
+    : await dispatchWorkspace(options, operation, body, resolveAllowedFolderIds);
 }
 
 async function dispatch(
@@ -97,7 +98,8 @@ async function dispatch(
   }
 }
 
-async function dispatchWorkspace(options: FolderControlPlaneHostRouteOptions, operation: string, body: Record<string, unknown>) {
+async function dispatchWorkspace(options: FolderControlPlaneHostRouteOptions, operation: string, body: Record<string, unknown>,
+  resolveAllowedFolderIds?: () => Promise<readonly string[] | null>) {
   if (!options.cardServiceProvider) throw new Error("Card service is not configured");
   const service = await options.cardServiceProvider();
   if (operation === "get_assigned_card_context") return service.getAssignedCardContext(requiredControlPlaneString(body,"session_id"));
@@ -114,7 +116,8 @@ async function dispatchWorkspace(options: FolderControlPlaneHostRouteOptions, op
     body.card_id as string | undefined,
     body.view as string | undefined,
     true,
-    { includeArchived: body.include_archived, limit: body.limit, cursor: body.cursor },
+    { includeArchived: body.include_archived, limit: body.limit, cursor: body.cursor,
+      allowedFolderIds: service.cardDependenciesEnabled ? await resolveAllowedFolderIds?.() : null },
   );
   if (operation === "list_child_folders" || operation === "list_folder_operations") {
     const limit = z.number().int().min(1).max(200).parse(body.limit ?? 50);

@@ -10,7 +10,7 @@ const id = z.string().min(1);
  */
 export const cardMaintenanceTools = {
   update_unstarted_card: { name: "update_unstarted_card", strictInputSchema: true, config: {
-    description: "아직 시작하지 않은 카드의 제목, 요청, 인계와 담당 에이전트·모델·노드를 고칩니다. 보관되지 않았고 사람 담당이나 담당 세션이 없으며 todo·queued·on_hold 상태이고 실행 결과 확인 중이 아닌 카드만 됩니다. 변경할 필드를 하나 이상 지정하세요. agent_id를 주면 그 에이전트가 담당이 됩니다. 상태와 대기열 순서는 유지합니다. 담당 세션이 있는 카드의 후속 지시와 담당 교체는 dispatch_work를 쓰세요. idempotency_key를 재사용하면 중복 변경을 막습니다.",
+    description: "아직 시작하지 않은 카드의 제목, 요청, 인계와 담당 에이전트·모델·노드를 고칩니다. 보관되지 않았고 사람 담당이나 담당 세션이 없으며 todo·queued·on_hold 상태이고 실행 결과 확인 중이 아닌 카드만 됩니다. depends_on으로 의존 카드 목록을 바꿉니다. 변경할 필드를 하나 이상 지정하세요. agent_id를 주면 그 에이전트가 담당이 됩니다. 상태와 대기열 순서는 유지합니다. 담당 세션이 있는 카드의 후속 지시와 담당 교체는 dispatch_work를 쓰세요. idempotency_key를 재사용하면 중복 변경을 막습니다.",
     inputSchema: {
       card_id: id,
       title: id.optional(),
@@ -19,6 +19,7 @@ export const cardMaintenanceTools = {
       agent_id: id.optional(),
       model_preset: id.optional(),
       node_id: id.optional(),
+      depends_on: z.array(id).max(20).optional().describe("먼저 완료(done)해야 하는 카드의 전체 ID나 번호(#12 또는 12) 목록입니다. 모두 완료될 때까지 대기열에서 시작하지 않습니다. 취소(cancelled)와 검토(review)는 완료로 보지 않습니다. 완료 카드는 보관해도 조건을 충족합니다. run_card는 의존 관계를 무시합니다. 서버에서 카드 의존 관계를 켠 경우에만 쓸 수 있습니다. 기존 목록을 통째로 바꾸며 []를 주면 지웁니다."),
       expected_version: z.number().int().positive().optional(),
       idempotency_key: id,
       caller_session_id: callerSessionIdSchema,

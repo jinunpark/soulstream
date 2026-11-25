@@ -18,6 +18,7 @@ import "./v3-postit-cards.css";
 import {PostItCardView as Paper, PostItGrid as PaperGrid, type PostItVariant} from "./PostItCardPresentation";
 import { summarizeCardItems } from "./card-item-summary";
 import { CardProgressSummary } from "./CardProgressSummary";
+import { cardDependencyWaitLabel } from "./card-dependency-wait-label";
 import { cardAssignee } from "./card-assignee";
 export {postItRotation} from "./PostItCardPresentation";
 export type {PostItVariant} from "./PostItCardPresentation";
@@ -62,7 +63,8 @@ export function PostItCardView({ card, activity, assignee, onOpen, statusControl
   const displayTitle = card.number == null ? card.title : `#${card.number} ${card.title}`;
   const itemSummary=summarizeCardItems(card.items,pendingConfirmations);
   const hasItems=Boolean(card.items?.length);
-  const nowText=card.now?.text;
+  const dependencyWaitLabel = useCardStore(state => cardDependencyWaitLabel(card, state.byId, state.isCardCurrent));
+  const nowText=dependencyWaitLabel ?? card.now?.text;
   const turnText=card.now?.turn==="user"?card.now.ask??undefined:undefined;
   const statusActions=statusControl?cardStatusChoices.map(status=>({
     label:cardStatusLabel({...card,status,blockedKind:null,blockedDetail:null}),

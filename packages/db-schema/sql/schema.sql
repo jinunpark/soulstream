@@ -3536,6 +3536,15 @@ CREATE INDEX IF NOT EXISTS idx_cards_queue ON cards(queue_position_key COLLATE "
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS card_id TEXT REFERENCES cards(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_card ON sessions(card_id) WHERE card_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS card_dependencies (
+    card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    depends_on_card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (card_id, depends_on_card_id),
+    CHECK (card_id <> depends_on_card_id)
+);
+CREATE INDEX IF NOT EXISTS idx_card_dependencies_depends_on ON card_dependencies(depends_on_card_id);
+
 CREATE TABLE IF NOT EXISTS card_reports (
     id TEXT PRIMARY KEY,
     card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,

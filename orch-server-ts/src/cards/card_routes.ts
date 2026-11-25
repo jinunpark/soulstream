@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { MESSAGE_BODY_LIMIT } from "../conversation/conversation_messages.js";
 import { allowed, CardNotFoundError, cardRouteErrorResponse, listCardRouteBody, mutateCardRouteBody, readCardRouteBody, sendCardMessageSchema } from "./card_route_body.js";
-import { serializeCardRow } from "../folders/folder_contracts.js";
+import { serializeCardRowForFolders } from "../folders/folder_contracts.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type {
   CardCommentAttachmentUploadInput,
@@ -41,20 +41,20 @@ export function registerCardRoutes(app: FastifyInstance, options: FolderRouteOpt
         const service=await options.cardServiceProvider!();
         const detail=await service.getCard(request.params.id);
         if(!detail)throw Object.assign(new Error("Card not found"),{statusCode:404});
-        await allowed(options,()=>options.accessProvider.resolveAccess(request),detail.card.folder_id);
+        const allowedFolderIds=await allowed(options,()=>options.accessProvider.resolveAccess(request),detail.card.folder_id);
         const actor=await cardActor(request,options);
         if(actor.actorKind!=='user')throw Object.assign(new Error("사용자 실행 경로입니다."),{statusCode:403});
         if(operation==='execution-settings'){
           const body=settings.parse(request.body);
           await allowed(options,()=>options.accessProvider.resolveAccess(request),body.folderId);
           await service.saveExecutionSettings({...body,...actor,cardId:request.params.id});
-          return {card:serializeCardRow((await service.getCard(request.params.id))!.card)};
+          return {card:serializeCardRowForFolders((await service.getCard(request.params.id))!.card,allowedFolderIds)};
         }
         if(!options.cardExecutionServiceProvider)throw Object.assign(new Error("Card execution unavailable"),{statusCode:503});
         const executor=await options.cardExecutionServiceProvider();
         const result=operation==='execute'?await executor.execute({...mutation.parse(request.body),...actor,cardId:request.params.id})
           :await executor.observe(request.params.id,z.string().min(1).parse(request.query.requestId),actor);
-        return reply.code(result.execution.state==='pending'?202:200).send({...result,card:serializeCardRow(result.card)});
+        return reply.code(result.execution.state==='pending'?202:200).send({...result,card:serializeCardRowForFolders(result.card,allowedFolderIds)});
       }catch(error){const failure=cardRouteErrorResponse(error);return reply.code(failure.status).send(failure.body);}
     }});
   }

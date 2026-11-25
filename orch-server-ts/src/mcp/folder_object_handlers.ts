@@ -1,11 +1,12 @@
 import { errorResult, errorResultFromError, jsonResult, type CallToolResult, type folderObjectTools } from "@soulstream/mcp-contract";
 import { executeFolderHostOperation, type FolderControlPlaneHostRouteOptions } from "../folders/folder_control_plane_host_route.js";
+import { resolveCardFolderIds } from "../cards/card_route_body.js";
 import { describeFolderOperationError } from "../folders/folder_workspace_routes.js";
 
 import type { McpCallContext, McpHostOptions } from "./types.js";
 
 type Args = Record<string, unknown>;
-type Handler = (options: Pick<McpHostOptions, "folders">, args: Args, context: McpCallContext) => Promise<CallToolResult>;
+type Handler = (options: Pick<McpHostOptions, "folders" | "cards">, args: Args, context: McpCallContext) => Promise<CallToolResult>;
 
 export const folderObjectHandlers = {
   create_folder: (o, a, c) => mutate(o.folders, "create_folder", a, c, {
@@ -18,7 +19,7 @@ export const folderObjectHandlers = {
   get_folder: (o, a) => query(o.folders, "get_folder", {
     folderId: a.folder_id, view: a.view, cardId: a.card_id,
     includeArchived: a.include_archived, limit: a.limit, cursor: a.cursor,
-  }),
+  }, () => resolveCardFolderIds(o.cards, o.cards.resolveAccess)),
   rename_folder: (o, a, c) => mutate(o.folders, "rename_folder", a, c, { ...mutationFields(a), name: a.name }),
   archive_folder: (o, a, c) => mutate(o.folders, "archive_folder", a, c, mutationFields(a)),
   unarchive_folder: (o, a, c) => mutate(o.folders, "unarchive_folder", a, c, mutationFields(a)),
@@ -38,8 +39,9 @@ async function mutate(options: FolderControlPlaneHostRouteOptions, operation: st
   } catch (error) { return errorResultFromError(error); }
 }
 
-async function query(options: FolderControlPlaneHostRouteOptions, operation: string, body: Args) {
-  try { return jsonResult(await request(options, operation, body)); }
+async function query(options: FolderControlPlaneHostRouteOptions, operation: string, body: Args,
+  resolveFolderIds?: () => Promise<readonly string[] | null>) {
+  try { return jsonResult(await request(options, operation, body, resolveFolderIds)); }
   catch (error) {
     if (operation === "get_folder" && (error as { statusCode?: number }).statusCode === 404) return jsonResult(null);
     return errorResult(error instanceof Error ? error.message : String(error));
@@ -54,12 +56,13 @@ function mutationActor(args: Args, context: McpCallContext) {
   return { actorKind: "agent", actorSessionId };
 }
 
-async function request(options: FolderControlPlaneHostRouteOptions, operation: string, input: Args) {
+async function request(options: FolderControlPlaneHostRouteOptions, operation: string, input: Args,
+  resolveFolderIds?: () => Promise<readonly string[] | null>) {
   // Match FolderService's top-level snake conversion and the old HTTP JSON boundary.
   const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)
     .map(([key, value]) => [key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`), value]));
   try {
-    const result = await executeFolderHostOperation(options, operation, JSON.parse(JSON.stringify(body)));
+    const result = await executeFolderHostOperation(options, operation, JSON.parse(JSON.stringify(body)), resolveFolderIds);
     return JSON.parse(JSON.stringify(result ?? null)) as unknown;
   } catch (error) {
     const failure = describeFolderOperationError(error);

@@ -21,6 +21,7 @@ export interface CoordinatorOptions {
   repository: CardOrchestrationRepository;
   cards: () => Promise<CardControlPlaneService>;
   dispatch: CardDispatchRepository;
+  cardDependenciesEnabled?: boolean;
   settings: () => Promise<OrchestrationSettings>;
   resolveTarget: (
     card: DispatchCard,
@@ -124,7 +125,12 @@ export class CardOrchestrationCoordinator {
       if (execution.mode === "skip") skippedReasons.push(execution.reason);
       else resumableLimited.push(card);
     }
-    const candidates = [...queue, ...resumableLimited];
+    const readyQueue = queue.filter(card => {
+      const execution = classifyExecution(card, null);
+      if (execution.mode === "skip") skippedReasons.push(execution.reason);
+      return execution.mode === "dispatch";
+    });
+    const candidates = [...readyQueue, ...resumableLimited];
     if (!candidates.length) {
       await this.options.repository.note(
         "skipped",
@@ -477,6 +483,10 @@ export class CardOrchestrationCoordinator {
         leaseToken: run.lease_token,
         workerInput: input,
       };
+      if (this.options.cardDependenciesEnabled && card.status === "queued" && await this.options.dispatch.hasUnmetDependencies(card.id)) {
+        this.options.warn(`card ${card.id} run skipped: dependencies_unmet`);
+        continue;
+      }
       try {
         if (execution.mode === "resume")
           await cards.resumeDispatchedCard({

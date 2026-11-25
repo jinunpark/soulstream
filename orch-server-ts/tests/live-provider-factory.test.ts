@@ -50,6 +50,7 @@ const liveProviderConfig: Record<string, unknown> = {
   jwt_secret: "jwt-secret",
   databaseUrl: "postgres://soulstream_test@localhost/soulstream_test",
   environment: "production",
+  card_dependencies_enabled: false,
   atom_enabled: true,
   atom_server_url: "https://atom.example.test",
   atom_api_key: "atom-secret",

@@ -38,6 +38,7 @@ function durableState() {
   };
 }
 function harness(state = durableState(), options: {
+  cardDependenciesEnabled?: boolean;
   beforeDecision?: (run: OrchestrationRun) => Promise<void>;
   decision?: (run: OrchestrationRun) => OrchestrationDecision;
 } = {}) {
@@ -90,12 +91,15 @@ function harness(state = durableState(), options: {
     workerObserved: vi.fn(async () => false),
   };
   const getCard = vi.fn(async (id: string) => {
-    const card = state.cards.find(value => value.id === id);
-    return card ? { card: structuredClone(card), questions: [] as Array<{text:string;answer:string|null}>, comments: [], reports: [] } : null;
+    const queued = state.cards.find(value => value.id === id);
+    if (!queued) return null;
+    const { dependencies_unmet: _dependenciesUnmet, ...card } = structuredClone(queued);
+    return { card, questions: [] as Array<{text:string;answer:string|null}>, comments: [], reports: [] };
   });
   const recordDispatch = vi.fn(async () => { throw new Error("These cost tests defer; worker admission would violate the fixture"); });
   const resumeDispatchedCard = vi.fn(async () => { throw new Error("These cost tests do not resume workers"); });
   const dispatch = {
+    hasUnmetDependencies: vi.fn(async (id: string) => state.cards.find(card => card.id === id)?.dependencies_unmet ?? false),
     queued: vi.fn(async () => structuredClone(state.cards.filter(card => card.status === "queued"))),
     limited: vi.fn(async () => structuredClone(state.cards.filter(card => card.status === "blocked" && card.blocked_kind === "limit"))),
     running: vi.fn(async () => structuredClone(state.runningCards)),
@@ -115,6 +119,7 @@ function harness(state = durableState(), options: {
   const warn = vi.fn();
   const coordinator = new CardOrchestrationCoordinator({
     repository: repository as unknown as CardOrchestrationRepository,
+    cardDependenciesEnabled: options.cardDependenciesEnabled,
     dispatch: dispatch as unknown as CardDispatchRepository,
     cards: async () => ({ getCard, recordDispatch, resumeDispatchedCard } as unknown as CardControlPlaneService),
     settings: settingsRead,
@@ -139,6 +144,36 @@ async function finishJudgement(h: ReturnType<typeof harness>) {
 }
 
 describe("card orchestration logical-input cost and durable replay", () => {
+  it("omits queued cards with unmet dependencies and records the skip reason", async () => {
+    const h = harness();
+    const ready = { ...queuedCard(), id: "ready" };
+    h.state.cards[0]!.dependencies_unmet = true;
+    await h.coordinator.kick();
+    expect(h.launchDecision).not.toHaveBeenCalled();
+    expect(h.repository.note).toHaveBeenCalledWith("skipped", "dependencies_unmet");
+
+    h.state.cards.push(ready);
+    await finishJudgement(h);
+    expect(h.launchDecision.mock.calls[0]![0].run.snapshot).toEqual([
+      expect.objectContaining({ cardId: ready.id }),
+    ]);
+  });
+  it("checks dependencies again before admitting a decided card", async () => {
+    const h = harness(durableState(), {
+      cardDependenciesEnabled: true,
+      decision: run => ({ decisions: run.snapshot.map(card => ({
+        cardId: card.cardId, cardVersion: card.cardVersion, action: "run", reason: "실행",
+      })) }),
+    });
+    await h.coordinator.kick();
+    const run = [...h.state.runs.values()][0]!;
+    h.state.cards[0]!.dependencies_unmet = true;
+    await h.coordinator.decisionEnded(run.session_id);
+    expect(h.dispatch.hasUnmetDependencies).toHaveBeenCalledWith("queued-1");
+    expect(h.recordDispatch).not.toHaveBeenCalled();
+    expect(h.warn).toHaveBeenCalledWith("card queued-1 run skipped: dependencies_unmet");
+    expect(h.repository.finish).toHaveBeenCalledWith(expect.objectContaining({ id: run.id }), "completed", "decision_applied");
+  });
   it("includes explicitly queued cards with unanswered questions in the decision snapshot",async()=>{
     const h=harness();
     h.getCard.mockImplementation(async()=>({card:structuredClone(h.state.cards[0]!),questions:[{text:"판단",answer:null},{text:"기존 답",answer:"진행"}],comments:[],reports:[]}));

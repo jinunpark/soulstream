@@ -6,14 +6,14 @@ import {
 } from "@soulstream/wire-schema/card-orchestration";
 import type { CardDispatchRepository, DispatchCard } from "./card_dispatch_repository.js";
 type OwnerSession = Awaited<ReturnType<CardDispatchRepository["ownerSession"]>>;
-type ExecutionCard = Pick<DispatchCard, "status" | "blocked_kind" | "assignee_session_id" | "limit_resume_session_id" | "limit_resume_at">;
+type ExecutionCard = Pick<DispatchCard, "status" | "blocked_kind" | "assignee_session_id" | "limit_resume_session_id" | "limit_resume_at" | "dependencies_unmet">;
 export type ExecutionClassification =
   | { mode: "dispatch" }
   | { mode: "resume"; owner: NonNullable<OwnerSession> }
-  | { mode: "skip"; reason: "limit_owner_missing" | "limit_owner_not_resumable" | "card_not_dispatchable" };
+  | { mode: "skip"; reason: "limit_owner_missing" | "limit_owner_not_resumable" | "card_not_dispatchable" | "dependencies_unmet" };
 
 export function classifyExecution(card: ExecutionCard, owner: OwnerSession): ExecutionClassification {
-  if (card.status === "queued") return { mode: "dispatch" };
+  if (card.status === "queued") return card.dependencies_unmet ? { mode: "skip", reason: "dependencies_unmet" } : { mode: "dispatch" };
   if (card.status === "blocked" && card.blocked_kind === "limit") {
     if (!card.assignee_session_id || !owner) return { mode: "skip", reason: "limit_owner_missing" };
     if (card.limit_resume_session_id===owner.session_id && card.assignee_session_id===owner.session_id && card.limit_resume_at===null) return { mode: "resume", owner };

@@ -42,6 +42,7 @@ export interface CardRow {
   nodeId: string | null; modelPreset: string | null; version: number; archived: boolean;
   createdAt: string; updatedAt: string;
   completedAt?: string | null;
+  dependsOn?: { id: string; number: number | null; status: CardStatus; met: boolean }[];
   latestActivity?: CardActivity | null;
   items?: CardCheckItem[];
   now?: CardNow | null;

@@ -38,6 +38,7 @@ export type OrchServerEnvironmentConfig = Partial<ExternalIngressEnvironmentConf
   readonly dashboard_dir: string;
   readonly soulstream_public_url: string;
   readonly dashboard_user_folder_access_configured: boolean;
+  readonly card_dependencies_enabled: boolean;
   readonly atom_enabled: boolean;
   readonly atom_server_url: string;
   readonly atom_public_url?: string;
@@ -83,6 +84,7 @@ export const ORCH_SERVER_ENVIRONMENT_VARIABLES = [
   "DATABASE_URL",
   "DASHBOARD_DIR",
   "SOULSTREAM_PUBLIC_URL",
+  "CARD_DEPENDENCIES_ENABLED",
   "ATOM_ENABLED",
   "ATOM_SERVER_URL",
   "ATOM_PUBLIC_URL",
@@ -198,6 +200,7 @@ export function loadOrchServerEnvironment(
     soulstream_public_url: publicOrigin(requiredEnvString(env, "SOULSTREAM_PUBLIC_URL")),
     dashboard_user_folder_access_configured:
       (env.DASHBOARD_USER_FOLDER_ACCESS?.trim() ?? "").length > 0,
+    card_dependencies_enabled: parseBoolean(env.CARD_DEPENDENCIES_ENABLED, "CARD_DEPENDENCIES_ENABLED", false),
     atom_enabled: parseBoolean(env.ATOM_ENABLED, "ATOM_ENABLED", false),
     atom_server_url: env.ATOM_SERVER_URL ?? "",
     ...(atomPublicUrl === null ? {} : { atom_public_url: atomPublicUrl }),

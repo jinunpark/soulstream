@@ -1,3 +1,4 @@
+import { serializeCardDependencies, type CardDependency } from "./card_dependencies.js";
 import { z } from "zod";
 import { CARD_STATUSES } from "@soulstream/wire-schema";
 import { isRecord } from "@soulstream/wire-schema/json-record";
@@ -59,6 +60,7 @@ export type CardMcpListCard = {
   assigneeSessionId: string | null;
   assigneeUserId: string | null;
   updatedAt: string;
+  dependsOn?: CardDependency[];
   folderId?: string;
   now?: unknown;
   matchSource?: CardMcpSearchMatchSource;
@@ -250,8 +252,9 @@ export class CardMcpReadService {
   constructor(
     sql: SqlClient,
     private readonly corsAllowedOrigins: readonly string[] = [],
+    cardDependenciesEnabled = false,
   ) {
-    this.repository = new CardMcpReadRepository(sql);
+    this.repository = new CardMcpReadRepository(sql, cardDependenciesEnabled);
   }
 
   async listCards(input: CardMcpListInput, allowedFolderIds: readonly string[] | null): Promise<CardMcpListResponse> {
@@ -259,7 +262,7 @@ export class CardMcpReadService {
     if (parsed.query !== undefined) {
       const searched = await this.searchCards({ query: parsed.query, folder_id: parsed.folder_id,
         status: parsed.status, limit: parsed.limit }, allowedFolderIds);
-      return { cards: searched.results, nextCursor: null, truncated: searched.truncated };
+      return { cards: await this.withDependencies(searched.results, allowedFolderIds), nextCursor: null, truncated: searched.truncated };
     }
     const folderId = parsed.folder_id ?? null;
     const status = parsed.status ?? null;
@@ -280,10 +283,18 @@ export class CardMcpReadService {
     }) as CardMcpListCard);
     const last = result.rows.at(-1);
     return {
-      cards,
+      cards: await this.withDependencies(cards, allowedFolderIds),
       nextCursor: result.truncated && last ? encodeListCursor(folderId, status, last) : null,
       truncated: result.truncated,
     };
+  }
+
+  private async withDependencies(cards: CardMcpListCard[], allowedFolderIds: readonly string[] | null): Promise<CardMcpListCard[]> {
+    const dependencies = await this.repository.listDependencies(cards.map(card => card.id));
+    return cards.map(card => {
+      const dependsOn = serializeCardDependencies(dependencies.get(card.id) ?? [], allowedFolderIds);
+      return dependsOn.length ? { ...card, dependsOn } : card;
+    });
   }
 
   async searchCards(input: CardMcpSearchInput, allowedFolderIds: readonly string[] | null): Promise<CardMcpSearchResponse> {

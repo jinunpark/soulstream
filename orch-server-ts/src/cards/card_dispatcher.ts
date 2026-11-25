@@ -44,6 +44,7 @@ export type CardNotification = {
 };
 export type CardDispatcherOptions = {
     repository: CardDispatchRepository;
+    cardDependenciesEnabled?: boolean;
     cards: () => Promise<CardControlPlaneService>;
     resolveTarget: (card: CardRow, modelPreset?: string | null) => CardTarget;
     launch: (input: CardLaunch) => Promise<unknown>;
@@ -62,7 +63,7 @@ export type CardDispatcherOptions = {
 const VERIFICATION_WAKE_GRACE_MS = 5 * 60_000;
 /** One selection seam; the director's global queue is the only scheduling policy. */
 export function pickNextCard(cards: readonly DispatchCard[], occupancy: Record<string, number>, concurrency: Record<string, number>, resolveNode: (card: DispatchCard) => string): DispatchCard | undefined {
-    return cards.find(card => card.assignee_kind !== "human" && !!card.assignee_agent_id
+    return cards.find(card => !card.dependencies_unmet && card.assignee_kind !== "human" && !!card.assignee_agent_id
         && (occupancy[resolveNode(card)] ?? 0) < (concurrency[resolveNode(card)] ?? concurrency.default!));
 }
 export class CardDispatcher {
@@ -263,7 +264,8 @@ export class CardDispatcher {
                     await cards.setCardStatus({ actorKind: "system", actorSessionId: null, cardId: card.id, status: "queued", expectedVersion: latest.card.version });
             }
         }
-        if (card.status === "queued" || op.operation_type === "reorder_card_queue" || op.operation_type === "answer_card_question" || (previousStatus !== "review" && card.status === "review"))
+        if (card.status === "queued" || op.operation_type === "reorder_card_queue" || op.operation_type === "answer_card_question" || (previousStatus !== "review" && card.status === "review")
+            || (this.options.cardDependenciesEnabled && previousStatus !== "done" && card.status === "done"))
             await this.dispatchOnce();
         const committed = change.committedCard;
         const kind = committed ? selectCardBoardNotice({operationType:op.operation_type, actorKind:op.actor_kind, previousStatus, committed, payload}) : null;
@@ -446,6 +448,7 @@ export class CardDispatcher {
             queue = queue.filter(c => c.id !== card.id);
             const target = targets.get(card.id)!;
             if (!target.available) continue;
+            if (this.options.cardDependenciesEnabled && await this.options.repository.hasUnmetDependencies(card.id)) continue;
             const detail = await cards.getCard(card.id);
             if (!detail || detail.card.status !== "queued")
                 continue;

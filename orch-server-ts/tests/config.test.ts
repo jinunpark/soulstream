@@ -71,6 +71,7 @@ describe("orch-server-ts config scaffold", () => {
         },
         "legacy@example.com": ["beta"],
       }),
+      CARD_DEPENDENCIES_ENABLED: "yes",
       ATOM_ENABLED: "yes",
       ATOM_SERVER_URL: "https://atom.example.com",
       ATOM_API_KEY: "atom-key",
@@ -110,6 +111,7 @@ describe("orch-server-ts config scaffold", () => {
       dashboard_dir: "/srv/dashboard",
       soulstream_public_url: "https://dashboard.example.test",
       dashboard_user_folder_access_configured: true,
+      card_dependencies_enabled: true,
       atom_enabled: true,
       atom_server_url: "https://atom.example.com",
       atom_api_key: "atom-key",
@@ -180,6 +182,7 @@ describe("orch-server-ts config scaffold", () => {
       trusted_proxy: "loopback",
       dashboard_dir: "",
       dashboard_user_folder_access_configured: false,
+      card_dependencies_enabled: false,
       atom_enabled: false,
       atom_root_node_id: null,
       domain_catalog_node_id: DEFAULT_DOMAIN_CATALOG_NODE_ID,
@@ -362,6 +365,11 @@ describe("orch-server-ts config scaffold", () => {
       CORS_ALLOWED_ORIGINS: "https://dashboard.example",
       AUTH_BEARER_TOKEN: "service-token",
     }).auth_bearer_token).toBe("service-token");
+  });
+
+  it("rejects invalid card dependency flag values", () => {
+    expect(() => loadOrchServerEnvironment({ ...minimalEnvironment(), CARD_DEPENDENCIES_ENABLED: "sometimes" }))
+      .toThrow(/CARD_DEPENDENCIES_ENABLED/);
   });
 
   it("keeps the checked-in environment reference complete and value-free", () => {

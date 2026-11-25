@@ -74,13 +74,14 @@ import {
 import { hasQuestionThreadUserInputAfterLastReplyTx, hasUserInputAfterLastReplyTx, readCardItemSourceTx } from "./control_plane/card_item_store.js";
 import { parseVerificationWakeAt, verificationWaitNow } from "./card_verification_wait.js";
 import { claimableCardSessions, assertSingleCardAssignee, translateAssigneeConflict, invalidCard } from "./card_assignee.js";
+import { assertCardDependenciesEnabled, lockCardDependencyTargetsTx, lockCardDependenciesTx, replaceCardDependenciesTx } from "./card_dependencies.js";
 
 export type PolicyAdmission = {runId:string;leaseToken:string;workerInput:Record<string,unknown>};
 export type CardMutationParams = FolderActorParams & { cardId: string; expectedVersion?: number; idempotencyKey?: string | null; reason?: string | null };
 export type CardMutationChange = {result:CardMutationResult;previousStatus?:CardStatus;previousAssigneeSessionId?:string | null;committedCard?:CardRow};
 type CreateCardParams = FolderActorParams & {
   folderId: string; title: string; request: string; attachments?: CardAttachment[]; queue?: boolean; assignee?: CardAssigneeInput | null;
-  nodeId?: string | null; modelPreset?: string | null; idempotencyKey?: string | null; brief?: string;
+  nodeId?: string | null; modelPreset?: string | null; idempotencyKey?: string | null; brief?: string; dependsOn?: string[];
 };
 type AddCommentParams = CardMutationParams & { body:string; kind?:"comment" | "spoken"; mode?:"spoken" | "reply"; itemId?:number; questionId?:string };
 /** Path attachments already turned into R2 assets before the create transaction ran. */
@@ -108,17 +109,21 @@ export class CardControlPlaneService {
     private readonly onQuestionAsked?: (input:{cardId:string;questionId:string})=>void | Promise<void>,
     appendTimeline?: AppendReportTimeline,
     private readonly attachmentPreparation?: CardAttachmentSourceStoreDeps,
-    private readonly control?: { defaultExecutionNodeId: string }) {
-    this.repo=new CardRepository(repoSql, corsAllowedOrigins);
+    private readonly control?: { defaultExecutionNodeId: string; cardDependenciesEnabled?: boolean }) {
+    this.repo=new CardRepository(repoSql, corsAllowedOrigins, this.cardDependenciesEnabled);
     this.core=new CardMutationCore(db,this.repo,broadcaster);
     this.reports=onReportsChanged ? new PersistentReportService(repoSql,onReportsChanged,undefined,appendTimeline) : undefined;
-    this.mcpRead=new CardMcpReadService(repoSql, corsAllowedOrigins);
+    this.mcpRead=new CardMcpReadService(repoSql, corsAllowedOrigins, this.cardDependenciesEnabled);
     this.maintenance=new CardMaintenanceService({
-      sql:repoSql,repo:this.repo,core:this.core,
+      sql:repoSql,repo:this.repo,core:this.core,cardDependenciesEnabled:this.cardDependenciesEnabled,
       patchTx:(sql,card,fields,actor,eventId)=>this.patch(sql,card,fields,actor,eventId),
       statusTx:(sql,card,eventId,params,payload)=>this.applyStatusTx(sql,card,eventId,params,payload),
       afterCommit:changes=>this.afterCommitMaintenance(changes),
     });
+  }
+  get cardDependenciesEnabled() { return this.control?.cardDependenciesEnabled ?? false; }
+  findCardDependencyTargets(ids: string[]) {
+    return this.repoSql<Pick<CardRow, "id" | "folder_id">[]>`SELECT id,folder_id FROM cards WHERE id=ANY(${ids}::text[])`;
   }
   getAssignedCardContext(sessionId: string) { return readAssignedCardContext(this.repoSql,sessionId); }
   getSupervisedCardContext(params: { sessionId: string; folderIds: string[] | null; cardLimit: number; questionLimit: number }): Promise<SupervisedCardSnapshot> {
@@ -179,6 +184,7 @@ export class CardControlPlaneService {
     return this.core.setFolderStatus(params);
   }
   async createCard(params: CreateCardParams) {
+    assertCardDependenciesEnabled(this.cardDependenciesEnabled,params.dependsOn);
     params = await this.prepareCreateCardParams(this.repoSql, params);
     const id=randomUUID();
     const prepared=await this.prepareCardAttachments(id,params);
@@ -234,7 +240,7 @@ export class CardControlPlaneService {
   }
   async createCardTx(
     sql: RepositorySql,
-    params: CreateCardParams & {cardId:string},
+    params: Omit<CreateCardParams,"dependsOn"> & {cardId:string},
   ): Promise<{operation:FolderOperationRow;eventId:number | null;card:CardRow}> {
     const prepared=await this.prepareCreateCardParams(sql,params);
     const result=await this.core.mutateTx(sql,this.createCardMutation(prepared,params.cardId,null));
@@ -253,8 +259,11 @@ export class CardControlPlaneService {
   private createCardMutation(params:CreateCardParams,id:string,prepared:PreparedCardAttachments | null):FolderMutateParams {
     const assignee=assigneeToFields(params.assignee);
     return { folderId:params.folderId,targetKind:"card",targetId:id,operationType:"create_card",actor:params,
-      idempotencyKey:params.idempotencyKey,payload:{ title:params.title,request:params.request,brief:params.brief ?? "",attachments:params.attachments ?? [],queue:params.queue ?? false,assignee:params.assignee ?? null,nodeId:params.nodeId ?? null,modelPreset:params.modelPreset ?? null },
+      idempotencyKey:params.idempotencyKey,payload:{ ...(params.dependsOn?.length ? {depends_on:params.dependsOn} : {}),title:params.title,request:params.request,brief:params.brief ?? "",attachments:params.attachments ?? [],queue:params.queue ?? false,assignee:params.assignee ?? null,nodeId:params.nodeId ?? null,modelPreset:params.modelPreset ?? null },
+      // 이벤트를 붙일 때 세션 행을 잠그므로 의존 관계 잠금을 먼저 얻는다.
+      preflight:params.dependsOn?.length ? lockCardDependenciesTx : undefined,
       apply:async (sql,eventId) => {
+        if (params.dependsOn?.length) await lockCardDependencyTargetsTx(sql,id,params.dependsOn);
         await this.lockFolder(sql,params.folderId);
         const position=await this.position(sql,params.folderId,null);
         const {writes}=await this.humanDecision(sql,null,{...params,type:'CREATE'},params,eventId,[],{},
@@ -275,6 +284,7 @@ export class CardControlPlaneService {
           VALUES(${id},${params.folderId},${position},${queuePosition},${params.title},${params.request},${params.brief ?? ""},${sql.json(params.attachments ?? [])},${sql.json(refs)},${initial.status},
           ${initial.assignee_kind},${initial.assignee_agent_id},${initial.assignee_session_id},${initial.assignee_user_id},${params.nodeId ?? null},${params.modelPreset ?? null},
           ${params.actorSessionId},${eventId},${params.actorSessionId},${eventId})`;
+        if (params.dependsOn?.length) await replaceCardDependenciesTx(sql,id,params.dependsOn);
       } };
   }
   updateUnstartedCard(params:CardMutationParams & UpdateUnstartedFields & {idempotencyKey:string}, authorizeFolder:AuthorizeFolder):Promise<UpdateUnstartedResult> {

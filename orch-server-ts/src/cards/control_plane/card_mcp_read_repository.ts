@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readCardDependencies, serializeCardDependencies, type ProjectedCardDependency } from "../card_dependencies.js";
 import type { RepositorySql, SqlClient } from "./card_types.js";
 
 export const CARD_MCP_READ_KINDS = [
@@ -76,7 +78,11 @@ function httpError(statusCode: number, message: string, code?: string): Error {
 }
 
 export class CardMcpReadRepository {
-  constructor(private readonly sql: SqlClient) {}
+  constructor(private readonly sql: SqlClient, private readonly cardDependenciesEnabled = false) {}
+
+  listDependencies(cardIds: readonly string[]) {
+    return this.cardDependenciesEnabled ? readCardDependencies(this.sql, cardIds) : new Map<string, ProjectedCardDependency[]>();
+  }
 
   async listCards(query: CardMcpListQuery): Promise<{ rows: CardMcpListRow[]; truncated: boolean }> {
     if (query.folderId && SYSTEM_FOLDER_IDS.includes(query.folderId as (typeof SYSTEM_FOLDER_IDS)[number]))
@@ -226,7 +232,7 @@ export class CardMcpReadRepository {
         throw httpError(404, "Card not found");
       if (allowedFolderIds !== null && !allowedFolderIds.includes(access.folder_id))
         throw httpError(403, "Folder access denied", "FOLDER_ACCESS_DENIED");
-      const current = await this.readCurrent(transaction, cardId);
+      const current = await this.readCurrent(transaction, cardId, allowedFolderIds);
       return read({ sql: transaction, current });
     });
   }
@@ -342,7 +348,7 @@ export class CardMcpReadRepository {
     `);
   }
 
-  private async readCurrent(sql: RepositorySql, cardId: string): Promise<CardMcpCurrent> {
+  private async readCurrent(sql: RepositorySql, cardId: string, allowedFolderIds: readonly string[] | null): Promise<CardMcpCurrent> {
     const row = (await sql<{
       id: string; number: number | null; folder_id: string; title: string; status: string; archived: boolean; version: number;
       assignee_kind: string | null; assignee_agent_id: string | null; assignee_session_id: string | null; assignee_user_id: string | null;
@@ -406,6 +412,9 @@ export class CardMcpReadRepository {
       FROM cards c WHERE c.id=${cardId}
     `)[0];
     if (!row) throw httpError(404, "Card not found");
+    const dependencies = this.cardDependenciesEnabled ? (await readCardDependencies(sql, [cardId], allowedFolderIds)).get(cardId) ?? [] : undefined;
+    const fpCard = dependencies === undefined ? row.fp_card
+      : createHash("md5").update(row.fp_card).update(JSON.stringify(serializeCardDependencies(dependencies, null))).digest("hex");
     return {
       card: {
         id: row.id, number: row.number, folder_id: row.folder_id, title: row.title, status: row.status,
@@ -413,6 +422,7 @@ export class CardMcpReadRepository {
         assignee_agent_id: row.assignee_agent_id, assignee_session_id: row.assignee_session_id,
         assignee_user_id: row.assignee_user_id, now: row.now, items: row.items,
         blocked_kind: row.blocked_kind, blocked_detail: row.blocked_detail,
+        ...(dependencies === undefined ? {} : { depends_on: dependencies }),
       },
       attachmentRefs: row.attachment_refs,
       available: {
@@ -421,7 +431,7 @@ export class CardMcpReadRepository {
         sessions: row.sessions_count, now_history: row.now_history_count,
       },
       fingerprints: {
-        card: row.fp_card, request: row.fp_request, brief: row.fp_brief, attachments: row.fp_attachments,
+        card: fpCard, request: row.fp_request, brief: row.fp_brief, attachments: row.fp_attachments,
         questions: row.fp_questions, questions_history: row.fp_questions_history, comments: row.fp_comments,
         notes: row.fp_notes, reports: row.fp_reports, sessions: row.fp_sessions,
         now_history: row.fp_now_history,

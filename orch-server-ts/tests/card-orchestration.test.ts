@@ -5,7 +5,8 @@ import {
   classifyExecution,
 } from "../src/cards/card_orchestration_selection.js";
 import { clampText } from "../src/cards/card_orchestration_input.js";
-import { CardDispatcher } from "../src/cards/card_dispatcher.js";
+import type { DispatchCard } from "../src/cards/card_dispatch_repository.js";
+import { CardDispatcher, pickNextCard } from "../src/cards/card_dispatcher.js";
 const snapshot = [
   { cardId: "a", cardVersion: 2 },
   { cardId: "b", cardVersion: 1 },
@@ -84,6 +85,13 @@ describe("server owns card orchestration admission", () => {
     const cards=[{id:"session",assignee_kind:"session",assignee_agent_id:null,assignee_session_id:"owner"},{id:"missing",assignee_kind:"session",assignee_agent_id:null,assignee_session_id:null}];
     expect(selectEligibleCards(cards as never,{n:1},{default:1},()=>({nodeId:"n",available:true,capacityClaimed:true}))).toEqual([cards[0]]);
     expect(selectEligibleCards(cards as never,{n:1},{default:1},()=>({nodeId:"n",available:true,capacityClaimed:false}))).toEqual([]);
+  });
+  it("skips an unmet dependency in FIFO selection and orchestration classification", () => {
+    const ready = { id: "ready", status: "queued", assignee_kind: "agent", assignee_agent_id: "worker" } as DispatchCard;
+    const waiting = { ...ready, id: "waiting", dependencies_unmet: true };
+    expect(pickNextCard([waiting, ready], {}, { default: 1 }, () => "node")).toBe(ready);
+    expect(classifyExecution(waiting, null)).toEqual({ mode: "skip", reason: "dependencies_unmet" });
+    expect(classifyExecution(ready, null)).toEqual({ mode: "dispatch" });
   });
   it("classifies quota resumes from the recorded owner and optional deadline", () => {
     const limitOwner = { session_id: "owner", node_id: "n", agent_id: "worker", model_preset: "worker-model", metadata: [], status: "error", termination_reason: "limit_hit", termination_event_id: 12 };

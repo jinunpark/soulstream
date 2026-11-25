@@ -88,10 +88,11 @@ const itemEvidence = cardEvidenceSchema;
 export const cardTools = {
   ...cardMaintenanceTools,
   create_card: { name: "create_card", timeoutMs: 60000, config: {
-    description: "요청 원문을 담은 카드를 드래프트로 만든다. 시작 전 수정은 update_unstarted_card를 쓴다. queue=true면 대기열에 올려 순서가 오면 시스템이 실행한다. assignee를 생략하면 만든 세션의 에이전트가 담당이 되고, 담당이 에이전트일 때 node_id와 model_preset을 생략하면 만든 세션의 값이 들어가며, brief에 인계 내용을 적는다.",
+    description: "요청 원문을 담은 카드를 드래프트로 만든다. 시작 전 수정은 update_unstarted_card를 쓴다. queue=true면 대기열에 올려 순서가 오면 시스템이 실행한다. depends_on으로 먼저 완료할 카드를 지정한다. assignee를 생략하면 만든 세션의 에이전트가 담당이 되고, 담당이 에이전트일 때 node_id와 model_preset을 생략하면 만든 세션의 값이 들어가며, brief에 인계 내용을 적는다.",
     inputSchema: { folder_id: id, title: id, request: z.string(), attachments: z.array(z.object({nodeId:id,path:id,name:id,mimeType:id}).strict()).optional()
         .describe("노드 파일 경로 첨부. 붙이는 순간 원래 노드에서 읽어 저장하며, 노드가 꺼져 있거나 파일을 못 읽으면 카드를 만들지 않는다."), assignee: assigneeSchema,
       brief: z.string().optional(), idempotency_key: id.optional(), node_id: id.optional(), model_preset: id.optional(), queue: z.boolean().optional(), caller_session_id: callerSessionIdSchema,
+      depends_on: z.array(id).max(20).optional().describe("먼저 완료(done)해야 하는 카드의 전체 ID나 번호(#12 또는 12) 목록입니다. 모두 완료될 때까지 대기열에서 시작하지 않습니다. 취소(cancelled)와 검토(review)는 완료로 보지 않습니다. 완료 카드는 보관해도 조건을 충족합니다. run_card는 의존 관계를 무시합니다. 서버에서 카드 의존 관계를 켠 경우에만 쓸 수 있습니다."),
       run: z.boolean().optional().describe("true면 만든 직후 run_card와 같은 방식으로 바로 실행한다. queue와 함께 쓰지 않는다.") },
   }, audience: "all" },
   dispatch_work: { name: "dispatch_work", strictInputSchema: true, config: {
